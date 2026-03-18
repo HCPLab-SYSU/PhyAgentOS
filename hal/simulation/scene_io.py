@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 # ── Markdown fences kept as constants (avoids backtick confusion in f-strings) ──
 _FENCE_OPEN = "```json"
@@ -47,6 +48,16 @@ def _load_json_block(path: Path) -> dict:
 def load_environment_doc(path: Path) -> dict:
     """Return the full environment document dict from ``ENVIRONMENT.md``."""
     return _load_json_block(path)
+
+
+def default_environment_doc() -> dict[str, Any]:
+    """Return an empty structured environment document."""
+    return {
+        "schema_version": "oea.environment.v1",
+        "scene_graph": {"nodes": [], "edges": []},
+        "robots": {},
+        "objects": {},
+    }
 
 
 def _extract_objects(doc: dict) -> dict[str, dict]:
@@ -88,18 +99,43 @@ def save_environment_doc(path: Path, environment: dict) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def merge_environment_doc(
+    existing: dict[str, Any] | None,
+    *,
+    objects: dict[str, dict] | None = None,
+    robots: dict[str, Any] | None = None,
+    scene_graph: dict[str, Any] | None = None,
+    map_data: dict[str, Any] | None = None,
+    tf_data: dict[str, Any] | None = None,
+    updated_at: str | None = None,
+) -> dict[str, Any]:
+    """Merge environment partitions while preserving unrelated sections."""
+    base = default_environment_doc()
+    if isinstance(existing, dict):
+        base.update(existing)
+
+    if objects is not None:
+        base["objects"] = objects
+    if robots is not None:
+        merged_robots = dict(base.get("robots", {}))
+        merged_robots.update(robots)
+        base["robots"] = merged_robots
+    if scene_graph is not None:
+        base["scene_graph"] = scene_graph
+    if map_data is not None:
+        base["map"] = map_data
+    if tf_data is not None:
+        base["tf"] = tf_data
+    if updated_at is not None:
+        base["updated_at"] = updated_at
+
+    return base
+
+
 def save_scene_to_md(path: Path, scene: dict[str, dict]) -> None:
     """Write *scene* to *path* (ENVIRONMENT.md) as a JSON code block.
 
     Preserves the human-readable header so that the LLM agent can still
     understand the file's purpose.
     """
-    save_environment_doc(
-        path,
-        {
-            "schema_version": "oea.environment.v1",
-            "scene_graph": {"nodes": [], "edges": []},
-            "robots": {},
-            "objects": scene,
-        },
-    )
+    save_environment_doc(path, merge_environment_doc({}, objects=scene))

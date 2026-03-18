@@ -27,7 +27,12 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from hal.simulation.scene_io import load_environment_doc, load_scene_from_md, save_environment_doc
+from hal.simulation.scene_io import (
+    load_environment_doc,
+    load_scene_from_md,
+    merge_environment_doc,
+    save_environment_doc,
+)
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -68,19 +73,21 @@ def _load_scene(path: Path) -> dict[str, dict]:
     return load_scene_from_md(path)
 
 
-def _save_scene(path: Path, scene: dict[str, dict]) -> None:
+def _save_scene(driver, path: Path, scene: dict[str, dict]) -> None:
     existing = load_environment_doc(path)
-    updated = {
-        "schema_version": "oea.environment.v1",
-        "updated_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
-        "scene_graph": existing.get("scene_graph", {"nodes": [], "edges": []}),
-        "robots": existing.get("robots", {}),
-        "objects": scene,
-    }
-    # Preserve optional global sections if present.
-    for key in ("map", "tf", "nav_state"):
-        if key in existing:
-            updated[key] = existing[key]
+    runtime_state = {}
+    runtime_getter = getattr(driver, "get_runtime_state", None)
+    if callable(runtime_getter):
+        runtime_state = runtime_getter() or {}
+    updated = merge_environment_doc(
+        existing,
+        objects=scene,
+        robots=runtime_state.get("robots"),
+        scene_graph=runtime_state.get("scene_graph"),
+        map_data=runtime_state.get("map"),
+        tf_data=runtime_state.get("tf"),
+        updated_at=datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+    )
     save_environment_doc(path, updated)
 
 
@@ -159,7 +166,7 @@ def _poll_once(driver, action_file: Path, env_file: Path) -> None:
     result = driver.execute_action(action_type, params)
     _log(f"Result: {result}")
 
-    _save_scene(env_file, driver.get_scene())
+    _save_scene(driver, env_file, driver.get_scene())
     _log("ENVIRONMENT.md updated.")
 
     action_file.write_text("", encoding="utf-8")
